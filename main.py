@@ -1,61 +1,67 @@
 import os
+import re
 import time
-from typing import List, Dict, Any
-from collections import defaultdict
+import collections
+from typing import Dict, List, Tuple
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
-class LogAnalyzer:
-    """
-    A utility class to analyze system logs, detect anomalies, and summarize errors and patterns.
-    """
-    def __init__(self, log_file: str):
-        """
-        Initialize the LogAnalyzer with the path to the log file.
-        """
-        self.log_file = log_file
-        self.anomalies = defaultdict(list)
+class LogHandler(FileSystemEventHandler):
+    """Handles log file changes."""
 
-    def read_logs(self) -> List[str]:
-        """
-        Read the log file and return a list of log lines.
-        """
-        try:
-            with open(self.log_file, 'r') as file:
-                logs = file.readlines()
-            return logs
-        except FileNotFoundError:
-            print(f"Log file {self.log_file} not found.")
-            return []
-        except Exception as e:
-            print(f"Error reading log file: {e}")
-            return []
+    def __init__(self, log_dir: str):
+        self.log_dir = log_dir
+        self.error_summary = collections.Counter()
 
-    def analyze_logs(self, logs: List[str]) -> Dict[str, Any]:
-        """
-        Analyze the logs and detect anomalies.
-        """
-        for log in logs:
-            if "ERROR" in log:
-                self.anomalies["errors"].append(log)
-            elif "WARNING" in log:
-                self.anomalies["warnings"].append(log)
-        return self.anomalies
+    def on_modified(self, event):
+        """Called when a file or directory is modified."""
 
-    def summarize(self) -> None:
-        """
-        Summarize the detected anomalies and errors.
-        """
-        print(f"Total errors: {len(self.anomalies['errors'])}")
-        print(f"Total warnings: {len(self.anomalies['warnings'])}")
+        # Only process log files in the specified directory
+        if event.src_path.startswith(self.log_dir) and event.src_path.endswith('.log'):
+            self.process_log_file(event.src_path)
 
-    def run(self) -> None:
-        """
-        Run the log analyzer.
-        """
-        logs = self.read_logs()
-        self.analyze_logs(logs)
-        self.summarize()
+    def process_log_file(self, file_path: str):
+        """Reads a log file and processes its contents."""
 
+        with open(file_path, 'r') as file:
+            for line in file:
+                self.process_log_line(line)
 
-if __name__ == "__main__":
-    log_analyzer = LogAnalyzer("system.log")
-    log_analyzer.run()
+    def process_log_line(self, line: str):
+        """Processes a single line from a log file."""
+
+        # Extract log level and message
+        match = re.search(r'(\[INFO\]|\[WARNING\]|\[ERROR\]): (.*)', line)
+        if match:
+            log_level, message = match.groups()
+
+            # If it's an error, add it to the summary
+            if log_level == '[ERROR]':
+                self.error_summary[message] += 1
+
+    def print_error_summary(self):
+        """Prints a summary of the errors."""
+
+        print('Error summary:')
+        for message, count in self.error_summary.items():
+            print(f'{message}: {count}')
+
+def monitor_logs(log_dir: str):
+    """Monitors a directory for changes to log files."""
+
+    event_handler = LogHandler(log_dir)
+    observer = Observer()
+    observer.schedule(event_handler, log_dir, recursive=True)
+    observer.start()
+
+    try:
+        while True:
+            time.sleep(1)
+            event_handler.print_error_summary()
+    except KeyboardInterrupt:
+        observer.stop()
+
+    observer.join()
+
+if __name__ == '__main__':
+    monitor_logs('/path/to/log/directory')
