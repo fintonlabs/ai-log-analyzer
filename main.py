@@ -1,67 +1,65 @@
 import os
-import re
 import time
-import collections
-from typing import Dict, List, Tuple
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
+import threading
+from typing import List, Dict
+from collections import defaultdict
+from sklearn.ensemble import IsolationForest  # Hypothetical ML model
 
-class LogHandler(FileSystemEventHandler):
-    """Handles log file changes."""
+class LogMonitor:
+    """
+    A utility class to monitor and analyze system logs in real-time.
+    """
 
-    def __init__(self, log_dir: str):
-        self.log_dir = log_dir
-        self.error_summary = collections.Counter()
+    def __init__(self, log_dirs: List[str], alert_threshold: float):
+        """
+        Initialize the LogMonitor with directories to monitor and an alert threshold.
+        """
+        self.log_dirs = log_dirs
+        self.alert_threshold = alert_threshold
+        self.model = IsolationForest()  # Hypothetical ML model
+        self.error_summary = defaultdict(int)
+        self.alerts = []
 
-    def on_modified(self, event):
-        """Called when a file or directory is modified."""
-
-        # Only process log files in the specified directory
-        if event.src_path.startswith(self.log_dir) and event.src_path.endswith('.log'):
-            self.process_log_file(event.src_path)
-
-    def process_log_file(self, file_path: str):
-        """Reads a log file and processes its contents."""
-
-        with open(file_path, 'r') as file:
-            for line in file:
-                self.process_log_line(line)
-
-    def process_log_line(self, line: str):
-        """Processes a single line from a log file."""
-
-        # Extract log level and message
-        match = re.search(r'(\[INFO\]|\[WARNING\]|\[ERROR\]): (.*)', line)
-        if match:
-            log_level, message = match.groups()
-
-            # If it's an error, add it to the summary
-            if log_level == '[ERROR]':
-                self.error_summary[message] += 1
-
-    def print_error_summary(self):
-        """Prints a summary of the errors."""
-
-        print('Error summary:')
-        for message, count in self.error_summary.items():
-            print(f'{message}: {count}')
-
-def monitor_logs(log_dir: str):
-    """Monitors a directory for changes to log files."""
-
-    event_handler = LogHandler(log_dir)
-    observer = Observer()
-    observer.schedule(event_handler, log_dir, recursive=True)
-    observer.start()
-
-    try:
+    def monitor_logs(self):
+        """
+        Continuously monitor and read new entries in system log files.
+        """
         while True:
-            time.sleep(1)
-            event_handler.print_error_summary()
-    except KeyboardInterrupt:
-        observer.stop()
+            for log_dir in self.log_dirs:
+                for filename in os.listdir(log_dir):
+                    if filename.endswith(".log"):
+                        self.process_log(os.path.join(log_dir, filename))
+            time.sleep(1)  # Sleep for a second before checking for new logs
 
-    observer.join()
+    def process_log(self, filepath: str):
+        """
+        Process a log file and update the error summary.
+        """
+        with open(filepath, 'r') as file:
+            lines = file.readlines()
+            for line in lines:
+                anomaly_score = self.model.predict([line])  # Hypothetical ML model prediction
+                if anomaly_score < self.alert_threshold:
+                    self.error_summary[filepath] += 1
+                    self.alerts.append(f"Alert: Anomaly detected in {filepath}")
 
-if __name__ == '__main__':
-    monitor_logs('/path/to/log/directory')
+    def get_summary(self) -> Dict[str, int]:
+        """
+        Return a summary of errors detected.
+        """
+        return self.error_summary
+
+    def get_alerts(self) -> List[str]:
+        """
+        Return a list of alerts.
+        """
+        return self.alerts
+
+# Example usage
+if __name__ == "__main__":
+    log_monitor = LogMonitor(["/var/log"], 0.5)
+    threading.Thread(target=log_monitor.monitor_logs).start()  # Start monitoring logs in a new thread
+
+    while True:
+        print(log_monitor.get_summary())  # Print error summary every second
+        time.sleep(1)
